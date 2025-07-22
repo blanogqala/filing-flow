@@ -10,13 +10,14 @@ interface UploadFormProps {
   onFileUpload: (files: File[]) => void;
   uploadedFiles: File[];
   onRemoveFile: (index: number) => void;
+  isUploading?: boolean;
 }
 
-export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile }: UploadFormProps) => {
+export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile, isUploading = false }: UploadFormProps) => {
   const [isHovering, setIsHovering] = useState(false);
   const { toast } = useToast();
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
     const validFiles = acceptedFiles.filter(file => {
       const isValid = file.type.startsWith('image/') || file.type === 'application/pdf';
       if (!isValid) {
@@ -30,11 +31,7 @@ export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile }: Upload
     });
     
     if (validFiles.length > 0) {
-      onFileUpload(validFiles);
-      toast({
-        title: "Files uploaded successfully",
-        description: `${validFiles.length} file(s) uploaded`,
-      });
+      await onFileUpload(validFiles);
     }
   }, [onFileUpload, toast]);
 
@@ -69,6 +66,7 @@ export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile }: Upload
             {...getRootProps()}
             className={`
               relative border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all duration-300
+              ${isUploading ? 'pointer-events-none opacity-50' : ''}
               ${isDragActive || isHovering 
                 ? 'border-primary bg-gradient-accent animate-pulse-glow' 
                 : 'border-border hover:border-primary/50 hover:bg-gradient-accent/50'
@@ -87,7 +85,7 @@ export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile }: Upload
               
               <div className="space-y-2">
                 <h3 className="text-lg font-semibold">
-                  {isDragActive ? 'Drop your receipts here!' : 'Upload Receipt Files'}
+                  {isUploading ? 'Uploading to secure storage...' : isDragActive ? 'Drop your receipts here!' : 'Upload Receipt Files'}
                 </h3>
                 <p className="text-muted-foreground">
                   Drag & drop images or PDFs, or click to browse
@@ -100,8 +98,9 @@ export const UploadForm = ({ onFileUpload, uploadedFiles, onRemoveFile }: Upload
               <Button 
                 variant="outline" 
                 className="mt-4 border-primary/50 hover:bg-primary hover:text-primary-foreground"
+                disabled={isUploading}
               >
-                Choose Files
+                {isUploading ? 'Uploading...' : 'Choose Files'}
               </Button>
             </motion.div>
           </div>

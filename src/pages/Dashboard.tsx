@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { uploadMultipleFiles } from '@/lib/uploadToFirebase';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,16 +19,40 @@ interface DashboardProps {
 
 export const Dashboard = ({ user }: DashboardProps) => {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+  const [uploadedUrls, setUploadedUrls] = useState<string[]>([]);
   const [extractedData, setExtractedData] = useState<ReceiptData[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
 
-  const handleFileUpload = (files: File[]) => {
-    setUploadedFiles(prev => [...prev, ...files]);
+  const handleFileUpload = async (files: File[]) => {
+    setIsUploading(true);
+    try {
+      // Upload files to Firebase Storage
+      const uploadedUrls = await uploadMultipleFiles(files, user.uid);
+      
+      // Update state with both files and URLs
+      setUploadedFiles(prev => [...prev, ...files]);
+      setUploadedUrls(prev => [...prev, ...uploadedUrls]);
+      
+      toast({
+        title: "Files uploaded successfully!",
+        description: `${files.length} file(s) uploaded to secure storage`,
+      });
+    } catch (error: any) {
+      toast({
+        title: "Upload failed",
+        description: error.message || "Failed to upload files",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleRemoveFile = (index: number) => {
     setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+    setUploadedUrls(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSignOut = async () => {
@@ -168,6 +193,7 @@ export const Dashboard = ({ user }: DashboardProps) => {
           onFileUpload={handleFileUpload}
           uploadedFiles={uploadedFiles}
           onRemoveFile={handleRemoveFile}
+          isUploading={isUploading}
         />
 
         {/* Preview Section */}
