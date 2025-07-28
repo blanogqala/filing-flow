@@ -18,7 +18,7 @@ export type Database = {
         Row: {
           amount: number
           category: string
-          created_at: string
+          created_at: string | null
           date: string
           description: string | null
           file_name: string
@@ -26,13 +26,13 @@ export type Database = {
           id: string
           merchant: string
           ocr_text: string | null
-          updated_at: string
-          user_id: string
+          updated_at: string | null
+          user_id: string | null
         }
         Insert: {
           amount: number
           category: string
-          created_at?: string
+          created_at?: string | null
           date: string
           description?: string | null
           file_name: string
@@ -40,13 +40,13 @@ export type Database = {
           id?: string
           merchant: string
           ocr_text?: string | null
-          updated_at?: string
-          user_id: string
+          updated_at?: string | null
+          user_id?: string | null
         }
         Update: {
           amount?: number
           category?: string
-          created_at?: string
+          created_at?: string | null
           date?: string
           description?: string | null
           file_name?: string
@@ -54,8 +54,34 @@ export type Database = {
           id?: string
           merchant?: string
           ocr_text?: string | null
-          updated_at?: string
-          user_id?: string
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "receipts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      users: {
+        Row: {
+          created_at: string | null
+          firebase_uid: string
+          id: string
+        }
+        Insert: {
+          created_at?: string | null
+          firebase_uid: string
+          id?: string
+        }
+        Update: {
+          created_at?: string | null
+          firebase_uid?: string
+          id?: string
         }
         Relationships: []
       }
@@ -64,7 +90,35 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      create_user_and_return_id: {
+        Args: { p_firebase_uid: string }
+        Returns: string
+      }
+      create_users_if_not_exists: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
+      get_or_create_user: {
+        Args: { p_firebase_uid: string }
+        Returns: string
+      }
+      get_user_receipts: {
+        Args: { p_firebase_uid: string }
+        Returns: {
+          amount: number
+          category: string
+          created_at: string | null
+          date: string
+          description: string | null
+          file_name: string
+          file_url: string | null
+          id: string
+          merchant: string
+          ocr_text: string | null
+          updated_at: string | null
+          user_id: string | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
