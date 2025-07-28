@@ -63,15 +63,23 @@ export const processReceiptOCR = async (file: File): Promise<OCRResult> => {
 };
 
 export const saveReceiptToSupabase = async (
-  userId: string,
+  firebaseUid: string,
   fileName: string,
   fileUrl: string,
   ocrResult: OCRResult
 ) => {
+  // First get or create the user in our users table
+  const { data: userData, error: userError } = await supabase
+    .rpc('get_or_create_user', { p_firebase_uid: firebaseUid });
+
+  if (userError) {
+    throw new Error(`Failed to get/create user: ${userError.message}`);
+  }
+
   const { data, error } = await supabase
     .from('receipts')
     .insert({
-      user_id: userId,
+      user_id: userData,
       file_name: fileName,
       file_url: fileUrl,
       date: ocrResult.date,
@@ -91,12 +99,10 @@ export const saveReceiptToSupabase = async (
   return data;
 };
 
-export const getUserReceipts = async (userId: string) => {
+export const getUserReceipts = async (firebaseUid: string) => {
+  // Use the database function that properly handles Firebase UIDs
   const { data, error } = await supabase
-    .from('receipts')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
+    .rpc('get_user_receipts', { p_firebase_uid: firebaseUid });
 
   if (error) {
     throw new Error(`Failed to fetch receipts: ${error.message}`);

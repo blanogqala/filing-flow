@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
-import { uploadMultipleFiles } from '@/lib/uploadToFirebase';
+import { uploadMultipleFiles } from '@/lib/uploadToSupabase';
 import { processReceiptOCR, saveReceiptToSupabase, getUserReceipts } from '@/lib/ocrService';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
@@ -56,7 +56,7 @@ export const Dashboard = ({ user }: DashboardProps) => {
   const handleFileUpload = async (files: File[]) => {
     setIsUploading(true);
     try {
-      // Upload files to Firebase Storage
+      // Upload files to Supabase Storage
       const uploadedUrls = await uploadMultipleFiles(files, user.uid);
       
       // Update state with both files and URLs
