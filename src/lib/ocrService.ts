@@ -96,6 +96,8 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   
   // Enhanced date extraction with multiple patterns
   const datePatterns = [
+    /Date\s+Issued\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi, // "Date Issued : DD/MM/YYYY"
+    /Date\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi, // "Date : DD/MM/YYYY"
     /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/g,  // MM/DD/YYYY or DD/MM/YYYY
     /(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/g,  // YYYY/MM/DD
     /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2})/g,  // MM/DD/YY or DD/MM/YY
@@ -111,7 +113,14 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
     if (matches && matches.length > 0) {
       for (const match of matches) {
         try {
-          const parsedDate = new Date(match.replace(/[\.]/g, '/'));
+          // Extract just the date part if it's a labeled date
+          let dateStr = match;
+          if (match.toLowerCase().includes('date')) {
+            const dateMatch = match.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/);
+            if (dateMatch) dateStr = dateMatch[1];
+          }
+          
+          const parsedDate = new Date(dateStr.replace(/[\.]/g, '/'));
           if (!isNaN(parsedDate.getTime()) && parsedDate.getFullYear() > 1900 && parsedDate.getFullYear() < 2030) {
             date = parsedDate.toISOString().split('T')[0];
             foundDate = true;
@@ -126,45 +135,53 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
     }
   }
   
-  // Enhanced amount extraction with multiple currency patterns
+  // Enhanced amount extraction with multiple currency patterns including South African Rand
   const amountPatterns = [
-    /(?:total|amount|sum)[:\s]*[\$£€¥₹]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,
-    /[\$£€¥₹]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/g,
-    /(\d+(?:,\d{3})*(?:\.\d{2})?)\s*[\$£€¥₹]/g,
-    /(\d+\.\d{2})(?!\d)/g // Any decimal number with 2 places
+    // Balance Due patterns (highest priority)
+    /Balance\s+Due[:\s]*R?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Total patterns with currency symbols
+    /(?:total|amount|sum|due)[:\s]*[R\$£€¥₹]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Currency symbol patterns
+    /[R\$£€¥₹]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/g,
+    /(\d+(?:,\d{3})*(?:\.\d{2})?)\s*[R\$£€¥₹]/g,
+    // Large amounts (likely totals) - prioritize amounts over 1000
+    /(\d{3,}(?:,\d{3})*(?:\.\d{2})?)/g
   ];
   
-  const amounts: number[] = [];
+  const amounts: { value: number; context: string; priority: number }[] = [];
   
-  for (const pattern of amountPatterns) {
+  for (let i = 0; i < amountPatterns.length; i++) {
+    const pattern = amountPatterns[i];
     let match;
     while ((match = pattern.exec(text)) !== null) {
       const amountStr = match[1].replace(/[,$]/g, '');
       const amount = parseFloat(amountStr);
-      if (!isNaN(amount) && amount > 0 && amount < 100000) { // Reasonable limits
-        amounts.push(amount);
-        console.log(`💰 Found amount: ${match[0]} -> ${amount}`);
+      if (!isNaN(amount) && amount > 0 && amount < 10000000) { // Increased reasonable limits
+        const priority = i === 0 ? 5 : // Balance Due gets highest priority
+                       i <= 2 ? 4 : // Total/Amount patterns get high priority
+                       amount > 10000 ? 3 : // Large amounts get medium priority
+                       amount > 1000 ? 2 : 1; // Smaller amounts get lower priority
+        
+        amounts.push({ 
+          value: amount, 
+          context: match[0], 
+          priority 
+        });
+        console.log(`💰 Found amount: ${match[0]} -> ${amount} (priority: ${priority})`);
       }
     }
   }
   
-  // Get the largest amount (likely the total) or look for "total" keyword nearby
+  // Sort by priority (highest first), then by amount (largest first)
+  amounts.sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority;
+    return b.value - a.value;
+  });
+  
   let amount = 0;
   if (amounts.length > 0) {
-    // Look for amounts near "total" keywords first
-    const totalRegex = /(?:total|amount|sum)[:\s]*[\$£€¥₹]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi;
-    let totalMatch = totalRegex.exec(text);
-    if (totalMatch) {
-      const totalAmount = parseFloat(totalMatch[1].replace(/[,$]/g, ''));
-      if (!isNaN(totalAmount)) {
-        amount = totalAmount;
-        console.log(`🎯 Found total amount: ${totalAmount}`);
-      }
-    } else {
-      // Fallback to largest amount
-      amount = Math.max(...amounts);
-      console.log(`📊 Using largest amount: ${amount}`);
-    }
+    amount = amounts[0].value;
+    console.log(`🎯 Selected amount: ${amounts[0].context} -> ${amount} (priority: ${amounts[0].priority})`);
   }
   
   // Enhanced merchant name extraction
@@ -226,14 +243,10 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   // Determine category based on merchant name and text content
   const category = categorizeReceipt(text, merchant);
   
-  // Generate more descriptive description
-  let description = `Purchase from ${merchant}`;
-  if (amount > 0) {
-    description += ` - $${amount.toFixed(2)}`;
-  }
-  if (foundDate && date !== new Date().toISOString().split('T')[0]) {
-    description += ` on ${date}`;
-  }
+  // Generate more descriptive description based on content
+  let description = generateDescription(text, merchant, amount, date, foundDate);
+  
+  console.log(`📝 Generated description: ${description}`);
   
   console.log(`📄 Final parsed data:`, {
     date,
@@ -250,6 +263,45 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
     amount: Math.round(amount * 100) / 100,
     description
   };
+};
+
+// Generate detailed description based on content
+const generateDescription = (text: string, merchant: string, amount: number, date: string, foundDate: boolean): string => {
+  const lowerText = text.toLowerCase();
+  let description = '';
+  
+  // Look for specific items or services in the text
+  if (lowerText.includes('truck') || lowerText.includes('vehicle') || lowerText.includes('car')) {
+    const vehicleMatch = text.match(/([\d\s\w]+(?:truck|vehicle|car|isuzu|toyota|ford|bmw|mercedes)[\w\s]*)/gi);
+    if (vehicleMatch) {
+      description = `Vehicle purchase: ${vehicleMatch[0].trim()}`;
+    } else {
+      description = 'Vehicle purchase';
+    }
+  } else if (lowerText.includes('auction')) {
+    description = 'Auction purchase';
+    const lotMatch = text.match(/lot[\s:]*(\d+)/gi);
+    if (lotMatch) {
+      description += ` - ${lotMatch[0]}`;
+    }
+  } else if (lowerText.includes('invoice') || lowerText.includes('pro-forma')) {
+    description = 'Invoice payment';
+  } else {
+    // Generic description
+    description = `Purchase from ${merchant}`;
+  }
+  
+  // Add amount if available
+  if (amount > 0) {
+    description += ` - R${amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
+  }
+  
+  // Add date if different from today
+  if (foundDate && date !== new Date().toISOString().split('T')[0]) {
+    description += ` on ${date}`;
+  }
+  
+  return description;
 };
 
 // Categorize receipt based on content
