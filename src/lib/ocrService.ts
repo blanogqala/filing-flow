@@ -137,15 +137,15 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   
   // Enhanced amount extraction with multiple currency patterns including South African Rand
   const amountPatterns = [
-    // Balance Due patterns (highest priority)
-    /Balance\s+Due[:\s]*R?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Balance Due patterns (highest priority) - handle both commas and spaces as thousands separators
+    /Balance\s+Due[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/gi,
     // Total patterns with currency symbols
-    /(?:total|amount|sum|due)[:\s]*[R\$£€¥₹]?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/gi,
-    // Currency symbol patterns
-    /[R\$£€¥₹]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)/g,
-    /(\d+(?:,\d{3})*(?:\.\d{2})?)\s*[R\$£€¥₹]/g,
-    // Large amounts (likely totals) - prioritize amounts over 1000
-    /(\d{3,}(?:,\d{3})*(?:\.\d{2})?)/g
+    /(?:total|amount|sum|due)[:\s]*[R\$£€¥₹]?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/gi,
+    // Currency symbol patterns - better handling of South African format
+    /R\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/g,
+    /(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)\s*(?:ZAR|R\b)/g,
+    // Large amounts (likely totals) - prioritize amounts over 10000
+    /(\d{5,}(?:[,\s]\d{3})*(?:\.\d{2})?)/g
   ];
   
   const amounts: { value: number; context: string; priority: number }[] = [];
@@ -154,13 +154,17 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
     const pattern = amountPatterns[i];
     let match;
     while ((match = pattern.exec(text)) !== null) {
-      const amountStr = match[1].replace(/[,$]/g, '');
+      // Clean the amount string - remove commas, spaces, and currency symbols
+      const amountStr = match[1].replace(/[,\s]/g, '').replace(/[R\$£€¥₹]/g, '');
       const amount = parseFloat(amountStr);
-      if (!isNaN(amount) && amount > 0 && amount < 10000000) { // Increased reasonable limits
-        const priority = i === 0 ? 5 : // Balance Due gets highest priority
-                       i <= 2 ? 4 : // Total/Amount patterns get high priority
-                       amount > 10000 ? 3 : // Large amounts get medium priority
-                       amount > 1000 ? 2 : 1; // Smaller amounts get lower priority
+      
+      if (!isNaN(amount) && amount > 0 && amount < 100000000) {
+        const priority = i === 0 ? 10 : // Balance Due gets highest priority
+                       i === 1 ? 8 : // Total/Amount patterns get high priority
+                       i <= 3 ? 6 : // Currency patterns get medium-high priority
+                       amount > 50000 ? 5 : // Very large amounts get medium priority
+                       amount > 10000 ? 3 : // Large amounts get lower priority
+                       1; // Small amounts get lowest priority
         
         amounts.push({ 
           value: amount, 
@@ -265,43 +269,135 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   };
 };
 
-// Generate detailed description based on content
+// Generate intelligent description based on content analysis
 const generateDescription = (text: string, merchant: string, amount: number, date: string, foundDate: boolean): string => {
   const lowerText = text.toLowerCase();
+  
+  // Extract itemized content for intelligent categorization
+  const items = extractItemsFromText(text);
   let description = '';
   
-  // Look for specific items or services in the text
-  if (lowerText.includes('truck') || lowerText.includes('vehicle') || lowerText.includes('car')) {
-    const vehicleMatch = text.match(/([\d\s\w]+(?:truck|vehicle|car|isuzu|toyota|ford|bmw|mercedes)[\w\s]*)/gi);
-    if (vehicleMatch) {
-      description = `Vehicle purchase: ${vehicleMatch[0].trim()}`;
-    } else {
-      description = 'Vehicle purchase';
-    }
-  } else if (lowerText.includes('auction')) {
-    description = 'Auction purchase';
-    const lotMatch = text.match(/lot[\s:]*(\d+)/gi);
-    if (lotMatch) {
-      description += ` - ${lotMatch[0]}`;
-    }
-  } else if (lowerText.includes('invoice') || lowerText.includes('pro-forma')) {
-    description = 'Invoice payment';
+  // Intelligent categorization based on found items
+  if (items.building.length > 0) {
+    description = `Building materials (${items.building.slice(0, 3).join(', ')}${items.building.length > 3 ? ', etc.' : ''})`;
+  } else if (items.medical.length > 0) {
+    description = `Pills and medication (${items.medical.slice(0, 3).join(', ')}${items.medical.length > 3 ? ', etc.' : ''})`;
+  } else if (items.automotive.length > 0) {
+    description = `Automotive (${items.automotive.slice(0, 3).join(', ')}${items.automotive.length > 3 ? ', etc.' : ''})`;
+  } else if (items.food.length > 0) {
+    description = `Food and groceries (${items.food.slice(0, 3).join(', ')}${items.food.length > 3 ? ', etc.' : ''})`;
+  } else if (items.office.length > 0) {
+    description = `Office supplies (${items.office.slice(0, 3).join(', ')}${items.office.length > 3 ? ', etc.' : ''})`;
   } else {
-    // Generic description
-    description = `Purchase from ${merchant}`;
-  }
-  
-  // Add amount if available
-  if (amount > 0) {
-    description += ` - R${amount.toLocaleString('en-ZA', { minimumFractionDigits: 2 })}`;
-  }
-  
-  // Add date if different from today
-  if (foundDate && date !== new Date().toISOString().split('T')[0]) {
-    description += ` on ${date}`;
+    // Fallback to context-based descriptions
+    if (lowerText.includes('truck') || lowerText.includes('vehicle') || lowerText.includes('car')) {
+      const vehicleMatch = text.match(/([\d\s\w]+(?:truck|vehicle|car|isuzu|toyota|ford|bmw|mercedes)[\w\s]*)/gi);
+      if (vehicleMatch) {
+        description = `Vehicle: ${vehicleMatch[0].trim()}`;
+      } else {
+        description = 'Vehicle purchase';
+      }
+    } else if (lowerText.includes('auction')) {
+      description = 'Auction purchase';
+      const lotMatch = text.match(/lot[\s:]*(\d+)/gi);
+      if (lotMatch) {
+        description += ` - ${lotMatch[0]}`;
+      }
+    } else if (lowerText.includes('invoice') || lowerText.includes('pro-forma')) {
+      description = 'Invoice payment';
+    } else {
+      description = `Purchase from ${merchant}`;
+    }
   }
   
   return description;
+};
+
+// Extract and categorize items from receipt text
+const extractItemsFromText = (text: string) => {
+  const lowerText = text.toLowerCase();
+  const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  
+  const items = {
+    building: [] as string[],
+    medical: [] as string[],
+    automotive: [] as string[],
+    food: [] as string[],
+    office: [] as string[]
+  };
+  
+  // Building materials keywords
+  const buildingKeywords = [
+    'paint', 'brush', 'roller', 'cement', 'concrete', 'brick', 'tile', 'wood', 'lumber', 
+    'nail', 'screw', 'hammer', 'drill', 'saw', 'pipe', 'wire', 'electrical', 'plumbing',
+    'insulation', 'drywall', 'sheetrock', 'roofing', 'shingle', 'siding', 'door', 'window',
+    'cabinet', 'flooring', 'carpet', 'laminate', 'hardwood', 'vinyl', 'grout', 'adhesive'
+  ];
+  
+  // Medical keywords
+  const medicalKeywords = [
+    'pill', 'tablet', 'capsule', 'medicine', 'medication', 'prescription', 'antibiotic',
+    'painkiller', 'vitamin', 'supplement', 'syrup', 'drops', 'cream', 'ointment', 'bandage',
+    'gauze', 'thermometer', 'syringe', 'ibuprofen', 'acetaminophen', 'aspirin', 'pharmacy'
+  ];
+  
+  // Automotive keywords
+  const automotiveKeywords = [
+    'oil', 'filter', 'brake', 'tire', 'battery', 'spark plug', 'belt', 'hose', 'fluid',
+    'transmission', 'engine', 'radiator', 'alternator', 'starter', 'muffler', 'exhaust',
+    'windshield', 'headlight', 'taillight', 'bumper', 'fender', 'mirror', 'wiper'
+  ];
+  
+  // Food keywords
+  const foodKeywords = [
+    'bread', 'milk', 'egg', 'cheese', 'butter', 'meat', 'chicken', 'beef', 'pork', 'fish',
+    'vegetable', 'fruit', 'apple', 'banana', 'orange', 'carrot', 'potato', 'onion', 'garlic',
+    'rice', 'pasta', 'cereal', 'sugar', 'flour', 'salt', 'pepper', 'spice', 'sauce', 'juice'
+  ];
+  
+  // Office supplies keywords
+  const officeKeywords = [
+    'paper', 'pen', 'pencil', 'marker', 'highlighter', 'stapler', 'clips', 'folder', 'binder',
+    'notebook', 'envelope', 'stamp', 'tape', 'glue', 'scissors', 'ruler', 'calculator',
+    'printer', 'ink', 'toner', 'cartridge', 'computer', 'keyboard', 'mouse', 'monitor'
+  ];
+  
+  // Search through lines for items
+  lines.forEach(line => {
+    const lowerLine = line.toLowerCase();
+    
+    buildingKeywords.forEach(keyword => {
+      if (lowerLine.includes(keyword) && !items.building.includes(keyword)) {
+        items.building.push(keyword);
+      }
+    });
+    
+    medicalKeywords.forEach(keyword => {
+      if (lowerLine.includes(keyword) && !items.medical.includes(keyword)) {
+        items.medical.push(keyword);
+      }
+    });
+    
+    automotiveKeywords.forEach(keyword => {
+      if (lowerLine.includes(keyword) && !items.automotive.includes(keyword)) {
+        items.automotive.push(keyword);
+      }
+    });
+    
+    foodKeywords.forEach(keyword => {
+      if (lowerLine.includes(keyword) && !items.food.includes(keyword)) {
+        items.food.push(keyword);
+      }
+    });
+    
+    officeKeywords.forEach(keyword => {
+      if (lowerLine.includes(keyword) && !items.office.includes(keyword)) {
+        items.office.push(keyword);
+      }
+    });
+  });
+  
+  return items;
 };
 
 // Categorize receipt based on content
