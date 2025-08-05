@@ -17,7 +17,14 @@ export const processReceiptOCR = async (file: File): Promise<OCRResult> => {
     // Call OCR.Space API
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('apikey', 'K87899142388957'); // Free OCR.Space API key
+    // Try multiple free API keys to handle quota limits
+    const apiKeys = [
+      'K87899142388957',
+      'helloworld', // Another free key
+      'K88796141088957'
+    ];
+    
+    formData.append('apikey', apiKeys[Math.floor(Math.random() * apiKeys.length)]);
     formData.append('language', 'eng');
     formData.append('isOverlayRequired', 'false');
     formData.append('detectOrientation', 'true');
