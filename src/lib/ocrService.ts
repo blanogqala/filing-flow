@@ -138,14 +138,15 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   // Enhanced amount extraction with multiple currency patterns including South African Rand
   const amountPatterns = [
     // Balance Due patterns (highest priority) - handle both commas and spaces as thousands separators
-    /Balance\s+Due[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/gi,
-    // Total patterns with currency symbols
-    /(?:total|amount|sum|due)[:\s]*[R\$£€¥₹]?\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/gi,
-    // Currency symbol patterns - better handling of South African format
-    /R\s*(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)/g,
-    /(\d{1,3}(?:[,\s]\d{3})*(?:\.\d{2})?)\s*(?:ZAR|R\b)/g,
-    // Large amounts (likely totals) - prioritize amounts over 10000
-    /(\d{5,}(?:[,\s]\d{3})*(?:\.\d{2})?)/g
+    /Balance\s+Due[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
+    // Total patterns with currency symbols - but lower priority than Balance Due
+    /(?:total|amount|sum)[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
+    // Currency symbol patterns - South African Rand with exact matching
+    /R\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/g,
+    // Invoice total patterns
+    /invoice\s+total[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
+    // Large amounts (6+ digits, likely totals)
+    /(?<!\d)(\d{6,}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)(?!\d)/g
   ];
   
   const amounts: { value: number; context: string; priority: number }[] = [];
@@ -154,16 +155,31 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
     const pattern = amountPatterns[i];
     let match;
     while ((match = pattern.exec(text)) !== null) {
-      // Clean the amount string - remove commas, spaces, and currency symbols
-      const amountStr = match[1].replace(/[,\s]/g, '').replace(/[R\$£€¥₹]/g, '');
+      // Clean the amount string - handle both comma and period as decimal separators
+      let amountStr = match[1].replace(/[R\$£€¥₹]/g, '').trim();
+      
+      // Handle South African number format (comma as thousands separator, period as decimal)
+      // First check if it's a large number with commas (like 218,040)
+      if (amountStr.includes(',') && !amountStr.includes('.')) {
+        // If comma appears and no period, treat comma as thousands separator
+        amountStr = amountStr.replace(/,/g, '');
+      } else if (amountStr.includes(',') && amountStr.includes('.')) {
+        // Both comma and period - comma is thousands, period is decimal
+        const parts = amountStr.split('.');
+        const beforeDecimal = parts[0].replace(/,/g, '');
+        amountStr = beforeDecimal + '.' + parts[1];
+      }
+      
       const amount = parseFloat(amountStr);
       
       if (!isNaN(amount) && amount > 0 && amount < 100000000) {
         const priority = i === 0 ? 10 : // Balance Due gets highest priority
                        i === 1 ? 8 : // Total/Amount patterns get high priority
-                       i <= 3 ? 6 : // Currency patterns get medium-high priority
-                       amount > 50000 ? 5 : // Very large amounts get medium priority
-                       amount > 10000 ? 3 : // Large amounts get lower priority
+                       i === 2 ? 7 : // R currency patterns get medium-high priority
+                       i === 3 ? 6 : // Invoice total patterns
+                       amount > 100000 ? 5 : // Very large amounts (100k+)
+                       amount > 50000 ? 4 : // Large amounts (50k+)
+                       amount > 10000 ? 3 : // Medium amounts (10k+)
                        1; // Small amounts get lowest priority
         
         amounts.push({ 
@@ -277,25 +293,32 @@ const generateDescription = (text: string, merchant: string, amount: number, dat
   const items = extractItemsFromText(text);
   let description = '';
   
-  // Intelligent categorization based on found items
+  // Intelligent categorization based on found items with better summaries
   if (items.building.length > 0) {
-    description = `Building materials (${items.building.slice(0, 3).join(', ')}${items.building.length > 3 ? ', etc.' : ''})`;
+    if (items.building.some(item => ['paint', 'brush', 'roller'].includes(item))) {
+      description = `Painting materials (${items.building.slice(0, 4).join(', ')}${items.building.length > 4 ? ' and more' : ''})`;
+    } else if (items.building.some(item => ['cement', 'concrete', 'brick'].includes(item))) {
+      description = `Construction materials (${items.building.slice(0, 4).join(', ')}${items.building.length > 4 ? ' and more' : ''})`;
+    } else {
+      description = `Building materials (${items.building.slice(0, 4).join(', ')}${items.building.length > 4 ? ' and more' : ''})`;
+    }
   } else if (items.medical.length > 0) {
-    description = `Pills and medication (${items.medical.slice(0, 3).join(', ')}${items.medical.length > 3 ? ', etc.' : ''})`;
+    description = `Pills and medication (${items.medical.slice(0, 4).join(', ')}${items.medical.length > 4 ? ' and more' : ''})`;
   } else if (items.automotive.length > 0) {
-    description = `Automotive (${items.automotive.slice(0, 3).join(', ')}${items.automotive.length > 3 ? ', etc.' : ''})`;
+    description = `Automotive parts (${items.automotive.slice(0, 4).join(', ')}${items.automotive.length > 4 ? ' and more' : ''})`;
   } else if (items.food.length > 0) {
-    description = `Food and groceries (${items.food.slice(0, 3).join(', ')}${items.food.length > 3 ? ', etc.' : ''})`;
+    description = `Food and groceries (${items.food.slice(0, 4).join(', ')}${items.food.length > 4 ? ' and more' : ''})`;
   } else if (items.office.length > 0) {
-    description = `Office supplies (${items.office.slice(0, 3).join(', ')}${items.office.length > 3 ? ', etc.' : ''})`;
+    description = `Office supplies (${items.office.slice(0, 4).join(', ')}${items.office.length > 4 ? ' and more' : ''})`;
   } else {
-    // Fallback to context-based descriptions
-    if (lowerText.includes('truck') || lowerText.includes('vehicle') || lowerText.includes('car')) {
-      const vehicleMatch = text.match(/([\d\s\w]+(?:truck|vehicle|car|isuzu|toyota|ford|bmw|mercedes)[\w\s]*)/gi);
-      if (vehicleMatch) {
-        description = `Vehicle: ${vehicleMatch[0].trim()}`;
+    // Enhanced context-based descriptions for specific receipt types
+    if (lowerText.includes('truck') || lowerText.includes('vehicle') || lowerText.includes('isuzu') || lowerText.includes('auction')) {
+      // Extract vehicle details more precisely
+      const vehicleDescMatch = text.match(/(\d{4}[\s]*(?:ISUZU|TOYOTA|FORD|BMW|MERCEDES|TRUCK)[\s\w\/\-]*)/gi);
+      if (vehicleDescMatch) {
+        description = `Vehicle purchase: ${vehicleDescMatch[0].trim().replace(/\s+/g, ' ')}`;
       } else {
-        description = 'Vehicle purchase';
+        description = 'Vehicle purchase at auction';
       }
     } else if (lowerText.includes('auction')) {
       description = 'Auction purchase';

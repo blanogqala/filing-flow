@@ -128,8 +128,8 @@ export const ReceiptTable = ({ data, isLoading }: ReceiptTableProps) => {
                   <DollarSign className="h-5 w-5 text-accent" />
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-2xl font-bold">${totalAmount.toFixed(2)}</p>
+                  <p className="text-sm text-muted-foreground">Total Amount (ZAR)</p>
+                  <p className="text-2xl font-bold">R{totalAmount.toFixed(2)}</p>
                 </div>
               </div>
             </CardContent>
@@ -219,7 +219,7 @@ export const ReceiptTable = ({ data, isLoading }: ReceiptTableProps) => {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-semibold">
-                        <span className="text-accent">${receipt.total.toFixed(2)}</span>
+                        <span className="text-accent">R{receipt.total.toFixed(2)}</span>
                       </TableCell>
                       <TableCell className="text-center">
                         <div className="flex items-center justify-center space-x-1">

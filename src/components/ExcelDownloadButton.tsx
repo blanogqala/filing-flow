@@ -30,7 +30,7 @@ export const ExcelDownloadButton = ({ data, disabled = false }: ExcelDownloadBut
         'Date': new Date(receipt.date).toLocaleDateString(),
         'Merchant': receipt.merchant,
         'Category': receipt.category,
-        'Total Amount': receipt.total,
+        'Total Amount (ZAR)': `R${receipt.total.toFixed(2)}`,
         'Items Count': receipt.items?.length || 0,
       }));
 
@@ -71,12 +71,12 @@ export const ExcelDownloadButton = ({ data, disabled = false }: ExcelDownloadBut
 
       const summaryData = [
         { 'Metric': 'Total Receipts', 'Value': data.length },
-        { 'Metric': 'Total Amount', 'Value': `$${totalAmount.toFixed(2)}` },
-        { 'Metric': 'Average Amount', 'Value': `$${(totalAmount / data.length).toFixed(2)}` },
+        { 'Metric': 'Total Amount (ZAR)', 'Value': `R${totalAmount.toFixed(2)}` },
+        { 'Metric': 'Average Amount (ZAR)', 'Value': `R${(totalAmount / data.length).toFixed(2)}` },
         { 'Metric': 'Date Range', 'Value': `${new Date(Math.min(...data.map(d => new Date(d.date).getTime()))).toLocaleDateString()} - ${new Date(Math.max(...data.map(d => new Date(d.date).getTime()))).toLocaleDateString()}` },
         { 'Metric': '', 'Value': '' }, // Empty row
         { 'Metric': 'Category Breakdown', 'Value': '' },
-        ...categoryTotals.map(cat => ({ 'Metric': cat.Category, 'Value': `${cat.Count} receipts - $${cat['Total Amount'].toFixed(2)}` }))
+        ...categoryTotals.map(cat => ({ 'Metric': cat.Category, 'Value': `${cat.Count} receipts - R${cat['Total Amount'].toFixed(2)}` }))
       ];
 
       const summarySheet = XLSX.utils.json_to_sheet(summaryData);
