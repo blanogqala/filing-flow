@@ -101,74 +101,98 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
   const lines = text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   console.log('📋 Text lines:', lines);
   
-  // Enhanced date extraction with multiple patterns
+  // Enhanced date extraction with multiple patterns - prioritize explicit date labels
   const datePatterns = [
-    /Date\s+Issued\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi, // "Date Issued : DD/MM/YYYY"
-    /Date\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi, // "Date : DD/MM/YYYY"
-    /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/g,  // MM/DD/YYYY or DD/MM/YYYY
-    /(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/g,  // YYYY/MM/DD
-    /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2})/g,  // MM/DD/YY or DD/MM/YY
-    /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}/gi, // Month DD, YYYY
-    /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/gi // DD Month YYYY
+    // High priority - labeled dates
+    /Date\s+Issued\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
+    /Invoice\s+Date\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
+    /Date\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
+    /Transaction\s+Date\s*:\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/gi,
+    // Medium priority - time stamps with dates
+    /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})\s+\d{1,2}:\d{2}/gi,
+    // Lower priority - standalone dates (but more restrictive)
+    /(?:^|\s)(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})(?:\s|$)/gm,
+    // Alternative formats
+    /(\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})/g,
+    /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}/gi,
+    /(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/gi
   ];
   
   let date = new Date().toISOString().split('T')[0]; // Default to today
   let foundDate = false;
   
-  for (const pattern of datePatterns) {
-    const matches = text.match(pattern);
-    if (matches && matches.length > 0) {
-      for (const match of matches) {
-        try {
-          // Extract just the date part if it's a labeled date
-          let dateStr = match;
-          if (match.toLowerCase().includes('date')) {
-            const dateMatch = match.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/);
-            if (dateMatch) dateStr = dateMatch[1];
-          }
-          
-          const parsedDate = new Date(dateStr.replace(/[\.]/g, '/'));
-          if (!isNaN(parsedDate.getTime()) && parsedDate.getFullYear() > 1900 && parsedDate.getFullYear() < 2030) {
-            date = parsedDate.toISOString().split('T')[0];
-            foundDate = true;
-            console.log(`📅 Found date: ${match} -> ${date}`);
-            break;
-          }
-        } catch (e) {
-          continue;
+  // Try each pattern in order of priority
+  for (let i = 0; i < datePatterns.length && !foundDate; i++) {
+    const pattern = datePatterns[i];
+    let match;
+    
+    while ((match = pattern.exec(text)) !== null && !foundDate) {
+      try {
+        let dateStr = match[1] || match[0];
+        
+        // Clean up the date string
+        if (dateStr.toLowerCase().includes('date')) {
+          const cleanMatch = dateStr.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/);
+          if (cleanMatch) dateStr = cleanMatch[1];
         }
+        
+        // Handle different date formats
+        let parsedDate;
+        if (dateStr.includes('.')) {
+          // Convert dots to slashes for parsing
+          parsedDate = new Date(dateStr.replace(/\./g, '/'));
+        } else {
+          parsedDate = new Date(dateStr);
+        }
+        
+        // Validate the date
+        if (!isNaN(parsedDate.getTime()) && 
+            parsedDate.getFullYear() > 1900 && 
+            parsedDate.getFullYear() < 2030) {
+          date = parsedDate.toISOString().split('T')[0];
+          foundDate = true;
+          console.log(`📅 Found date (priority ${i}): ${match[0]} -> ${date}`);
+        }
+      } catch (e) {
+        console.log(`❌ Date parsing error for: ${match[0]}`);
+        continue;
       }
-      if (foundDate) break;
     }
+    
+    // Reset regex for next iteration
+    pattern.lastIndex = 0;
   }
   
-  // Enhanced amount extraction with multiple currency patterns including South African Rand
+  // Enhanced amount extraction specifically optimized for South African Rand
   const amountPatterns = [
-    // Balance Due patterns (highest priority) - handle both commas and spaces as thousands separators
-    /Balance\s+Due[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
-    // Total patterns with currency symbols - but lower priority than Balance Due
-    /(?:total|amount|sum)[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
-    // Currency symbol patterns - South African Rand with exact matching
-    /R\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/g,
-    // Invoice total patterns
-    /invoice\s+total[:\s]*R?\s*(\d{1,3}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)/gi,
-    // Large amounts (6+ digits, likely totals)
-    /(?<!\d)(\d{6,}(?:[,\s]\d{3})*(?:[,\.]?\d{2})?)(?!\d)/g
+    // Highest priority - Balance Due with R prefix (most reliable total)
+    /Balance\s+Due[:\s]*R\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    /Balance\s+Due[:\s]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // High priority - Explicitly labeled totals with R
+    /(?:total|grand\s+total|amount\s+due)[:\s]*R\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Medium-high priority - R currency symbol patterns (most reliable for SA)
+    /(?:^|\s)R\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gm,
+    // Medium priority - Invoice/payment totals
+    /(?:invoice\s+total|payment\s+total|amount\s+payable)[:\s]*R?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Lower priority - Generic total patterns
+    /(?:total|amount)[:\s]*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/gi,
+    // Lowest priority - Large standalone amounts (be more selective)
+    /(?:^|\s)(\d{3,}(?:,\d{3})+(?:\.\d{2})?)(?:\s|$)/gm
   ];
   
-  const amounts: { value: number; context: string; priority: number }[] = [];
+  const amounts: { value: number; context: string; priority: number; hasRandSymbol: boolean }[] = [];
   
   for (let i = 0; i < amountPatterns.length; i++) {
     const pattern = amountPatterns[i];
     let match;
     while ((match = pattern.exec(text)) !== null) {
-      // Clean the amount string - handle both comma and period as decimal separators
-      let amountStr = match[1].replace(/[R\$£€¥₹]/g, '').trim();
+      // Clean the amount string
+      let amountStr = match[1].replace(/[R\s]/g, '').trim();
+      const hasRandSymbol = match[0].toLowerCase().includes('r');
       
-      // Handle South African number format (comma as thousands separator, period as decimal)
-      // First check if it's a large number with commas (like 218,040)
+      // Handle South African number format (comma as thousands, period as decimal)
       if (amountStr.includes(',') && !amountStr.includes('.')) {
-        // If comma appears and no period, treat comma as thousands separator
+        // Large numbers with commas as thousands separators (e.g., "218,040")
         amountStr = amountStr.replace(/,/g, '');
       } else if (amountStr.includes(',') && amountStr.includes('.')) {
         // Both comma and period - comma is thousands, period is decimal
@@ -192,9 +216,10 @@ const parseReceiptText = (text: string): Omit<OCRResult, 'rawText'> => {
         amounts.push({ 
           value: amount, 
           context: match[0], 
-          priority 
+          priority,
+          hasRandSymbol 
         });
-        console.log(`💰 Found amount: ${match[0]} -> ${amount} (priority: ${priority})`);
+        console.log(`💰 Found amount: ${match[0]} -> ${amount} (priority: ${priority}, hasR: ${hasRandSymbol})`);
       }
     }
   }
